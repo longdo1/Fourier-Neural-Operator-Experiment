@@ -1,0 +1,282 @@
+"""
+Fourier Neural Operator (1D) for learning solution operators of parametric PDEs.
+
+Trains on (f, u) sample pairs where:
+    f : parameter/input function on a uniform grid, shape (N,)
+    u : PDE solution on the same grid,            shape (N,)
+
+Reference: Li et al., "Fourier Neural Operator for Parametric Partial
+Differential Equations" (ICLR 2021).
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader, random_split
+
+
+# ---------------------------------------------------------------------------
+# Spectral convolution: the core of an FNO layer
+# ---------------------------------------------------------------------------
+class SpectralConv1d(nn.Module):
+    """
+    1D spectral convolution:  FFT -> learnable complex mul on low modes -> IFFT.
+
+    Only the lowest `modes` Fourier modes are kept/learned; higher modes are
+    zeroed. This is what makes the operator resolution-invariant: the learned
+    weights live in frequency space, independent of grid resolution N.
+    """
+
+    def __init__(self, in_channels: int, out_channels: int, modes: int):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.modes = modes
+
+        scale = 1.0 / (in_channels * out_channels)
+        # Complex-valued learnable weights R_{i,o,k} for k = 0, ..., modes-1
+        self.weights = nn.Parameter(
+            scale * torch.rand(in_channels, out_channels, modes, dtype=torch.cfloat)
+        )
+
+    @staticmethod
+    def _compl_mul1d(inp: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+        # (batch, in, k), (in, out, k) -> (batch, out, k)
+        return torch.einsum("bik,iok->bok", inp, weights)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (batch, in_channels, N)
+        batch, _, N = x.shape
+        x_ft = torch.fft.rfft(x, norm="ortho")  # (batch, in, N//2+1)
+
+        out_ft = torch.zeros(
+            batch, self.out_channels, N // 2 + 1,
+            dtype=torch.cfloat, device=x.device,
+        )
+        k = min(self.modes, x_ft.shape[-1])
+        out_ft[:, :, :k] = self._compl_mul1d(x_ft[:, :, :k], self.weights[:, :, :k])
+
+        return torch.fft.irfft(out_ft, n=N, norm="ortho")  # (batch, out, N)
+
+
+# ---------------------------------------------------------------------------
+# Full 1D FNO
+# ---------------------------------------------------------------------------
+class FNO1d(nn.Module):
+    """
+    1D Fourier Neural Operator.
+
+    Input:  tensor of shape (batch, N, in_channels), where channels contain
+            the input function f and (optionally) the grid coordinate x.
+    Output: tensor of shape (batch, N, out_channels), the predicted u.
+    """
+
+    def __init__(
+        self,
+        modes: int = 16,
+        width: int = 64,
+        in_channels: int = 2,   # f(x) and x-coordinate
+        out_channels: int = 1,
+        n_layers: int = 4,
+    ):
+        super().__init__()
+        self.modes = modes
+        self.width = width
+        self.n_layers = n_layers
+
+        # Lifting: pointwise linear (applied over channel dim)
+        self.fc0 = nn.Linear(in_channels, width)
+
+        # Fourier + bypass layers
+        self.spectral_convs = nn.ModuleList(
+            [SpectralConv1d(width, width, modes) for _ in range(n_layers)]
+        )
+        self.ws = nn.ModuleList(
+            [nn.Conv1d(width, width, kernel_size=1) for _ in range(n_layers)]
+        )
+
+        # Projection: 2-layer MLP
+        self.fc1 = nn.Linear(width, 128)
+        self.fc2 = nn.Linear(128, out_channels)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (batch, N, in_channels)
+        x = self.fc0(x)                     # (batch, N, width)
+        x = x.permute(0, 2, 1)              # (batch, width, N)
+
+        for i in range(self.n_layers):
+            x1 = self.spectral_convs[i](x)
+            x2 = self.ws[i](x)
+            x = x1 + x2
+            if i < self.n_layers - 1:
+                x = F.gelu(x)
+
+        x = x.permute(0, 2, 1)              # (batch, N, width)
+        x = F.gelu(self.fc1(x))
+        x = self.fc2(x)                     # (batch, N, out_channels)
+        return x
+
+
+# ---------------------------------------------------------------------------
+# Dataset: wraps (f, u) pairs and appends the grid coordinate as a channel
+# ---------------------------------------------------------------------------
+class FUPairDataset(Dataset):
+    """
+    Wraps (f, u) sample pairs. Expects:
+        f : np.ndarray or torch.Tensor of shape (n_samples, N)
+        u : np.ndarray or torch.Tensor of shape (n_samples, N)
+
+    Returns (x_in, u_target) where:
+        x_in     shape (N, 2)  -- channels = [f(x), x]
+        u_target shape (N, 1)
+    """
+
+    def __init__(self, f, u, domain=(0.0, 1.0)):
+        f = torch.as_tensor(np.asarray(f), dtype=torch.float32)
+        u = torch.as_tensor(np.asarray(u), dtype=torch.float32)
+        assert f.shape == u.shape, "f and u must have matching shapes"
+
+        self.f = f
+        self.u = u.unsqueeze(-1)  # (n_samples, N, 1)
+
+        N = f.shape[-1]
+        grid = torch.linspace(domain[0], domain[1], N, dtype=torch.float32)
+        self.grid = grid  # (N,)
+
+    def __len__(self) -> int:
+        return self.f.shape[0]
+
+    def __getitem__(self, idx: int):
+        f_i = self.f[idx]                              # (N,)
+        x_in = torch.stack([f_i, self.grid], dim=-1)   # (N, 2)
+        return x_in, self.u[idx]                       # (N, 2), (N, 1)
+
+
+# ---------------------------------------------------------------------------
+# Relative Lp loss (standard in FNO literature; p=2 by default)
+# ---------------------------------------------------------------------------
+class LpLoss(nn.Module):
+    """Relative Lp loss: ||pred - target||_p / ||target||_p, averaged over batch."""
+
+    def __init__(self, p: int = 2, eps: float = 1e-8):
+        super().__init__()
+        self.p = p
+        self.eps = eps
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        # Flatten everything except batch
+        b = pred.shape[0]
+        diff_norm = torch.norm(pred.reshape(b, -1) - target.reshape(b, -1), p=self.p, dim=1)
+        targ_norm = torch.norm(target.reshape(b, -1), p=self.p, dim=1)
+        return torch.mean(diff_norm / (targ_norm + self.eps))
+
+
+# ---------------------------------------------------------------------------
+# Training loop
+# ---------------------------------------------------------------------------
+def train_fno(
+    model: FNO1d,
+    train_loader: DataLoader,
+    val_loader: DataLoader | None = None,
+    epochs: int = 500,
+    lr: float = 1e-3,
+    weight_decay: float = 1e-4,
+    step_size: int = 100,
+    gamma: float = 0.5,
+    device: str | torch.device = "cuda" if torch.cuda.is_available() else "cpu",
+    log_every: int = 10,
+):
+    """
+    Train an FNO1d model. Returns history dict with 'train' and 'val' loss lists.
+    """
+    model = model.to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
+    loss_fn = LpLoss(p=2)
+
+    history = {"train": [], "val": []}
+
+    for epoch in range(1, epochs + 1):
+        # ---- train ----
+        model.train()
+        running = 0.0
+        n = 0
+        for x_in, u in train_loader:
+            x_in, u = x_in.to(device), u.to(device)
+            optimizer.zero_grad()
+            pred = model(x_in)
+            loss = loss_fn(pred, u)
+            loss.backward()
+            optimizer.step()
+            running += loss.item() * x_in.size(0)
+            n += x_in.size(0)
+        train_loss = running / n
+        history["train"].append(train_loss)
+
+        # ---- validation ----
+        val_loss = float("nan")
+        if val_loader is not None:
+            model.eval()
+            running = 0.0
+            n = 0
+            with torch.no_grad():
+                for x_in, u in val_loader:
+                    x_in, u = x_in.to(device), u.to(device)
+                    pred = model(x_in)
+                    loss = loss_fn(pred, u)
+                    running += loss.item() * x_in.size(0)
+                    n += x_in.size(0)
+            val_loss = running / n
+            history["val"].append(val_loss)
+
+        scheduler.step()
+
+        if epoch == 1 or epoch % log_every == 0 or epoch == epochs:
+            msg = f"epoch {epoch:4d} | train rel-L2 {train_loss:.4e}"
+            if val_loader is not None:
+                msg += f" | val rel-L2 {val_loss:.4e}"
+            msg += f" | lr {scheduler.get_last_lr()[0]:.2e}"
+            print(msg)
+
+    return history
+
+
+
+if __name__ == "__main__":
+    # Expected shapes: f, u  ->  (n_samples, N)
+    f = np.load("poisson_1d_f_train.npy")  # shape (n_samples, N)
+    u = np.load("poisson_1d_u_train.npy")  # shape (n_samples, N)
+
+    dataset = FUPairDataset(f, u, domain=(0.0, 1.0))
+
+    # Train / val split
+    n_train = int(0.8 * len(dataset))
+    n_val = len(dataset) - n_train
+    train_set, val_set = random_split(
+        dataset, [n_train, n_val], generator=torch.Generator().manual_seed(42)
+    )
+    train_loader = DataLoader(train_set, batch_size=20, shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=20, shuffle=False)
+
+    # Build and train
+    model = FNO1d(modes=16, width=64, in_channels=2, out_channels=1, n_layers=4)
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"FNO1d trainable parameters: {n_params:,}")
+
+    history = train_fno(
+        model,
+        train_loader,
+        val_loader,
+        epochs=500,
+        lr=1e-3,
+        step_size=50,
+        gamma=0.5,
+        log_every=10,
+    )
+
+    # Save model weights
+    torch.save(model.state_dict(), "fno1d_weights.pt")
+    print("Saved weights -> fno1d_weights.pt")
