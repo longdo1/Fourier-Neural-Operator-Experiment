@@ -6,6 +6,7 @@ Source terms f(x) are sampled from a Gaussian Random Field (GRF).
 
 Outputs:
   poisson_1d_f.npy  — shape [N_samples, resolution]
+  poisson_1d_x.npy  — shape [resolution]  (grid coordinates)
 """
 
 import numpy as np
@@ -56,6 +57,11 @@ def sample_grf_batch(n_samples, n_points, alpha, tau):
 f_all = sample_grf_batch(N_SAMPLES, RESOLUTION, ALPHA, TAU)
 
 np.save("poisson_1d_f_test.npy", f_all)
+x = np.linspace(0, 1, RESOLUTION)
+np.save("poisson_1d_x_test.npy", x)
 
 print(f"Saved {N_SAMPLES} samples at resolution {RESOLUTION}")
 print(f"  f shape: {f_all.shape}")
+print(f"  x shape: {x.shape}")
+
+
