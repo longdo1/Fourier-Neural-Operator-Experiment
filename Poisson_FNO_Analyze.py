@@ -31,8 +31,8 @@ BATCH_SIZE = 20
 TRAIN_FRAC = 0.8
 SPLIT_SEED = 42
 
-f_all = np.load("poisson_1d_f_train.npy")   # (2000, 256)
-u_all = np.load("poisson_1d_u_train.npy")   # (2000, 256)
+f_all = np.load("data/poisson_1d_f_train.npy")   # (2000, 256)
+u_all = np.load("data/poisson_1d_u_train.npy")   # (2000, 256)
 
 dataset = FUPairDataset(f_all, u_all, domain=(0.0, 1.0))
 n_train = int(TRAIN_FRAC * len(dataset))
@@ -51,14 +51,14 @@ x_grid = np.linspace(0.0, 1.0, N)
 # Load trained model
 # ---------------------------------------------------------------------------
 model = FNO1d(modes=16, width=64, in_channels=2, out_channels=1, n_layers=4)
-model.load_state_dict(torch.load("fno1d_weights.pt", map_location=DEVICE))
+model.load_state_dict(torch.load("models/fno1d_weights.pt", map_location=DEVICE))
 model = model.to(DEVICE)
 model.eval()
 
 # ---------------------------------------------------------------------------
 # Figure 1: Loss history
 # ---------------------------------------------------------------------------
-with open("fno1d_history.json") as fh:
+with open("models/fno1d_history.json") as fh:
     history = json.load(fh)
 
 train_loss = history["train"]
@@ -74,7 +74,7 @@ ax.set_title("FNO1d — Training history")
 ax.legend()
 ax.grid(True, which="both", alpha=0.3)
 fig.tight_layout()
-fig.savefig("fno_loss_history.png", dpi=150)
+fig.savefig("plots/fno_loss_history.png", dpi=150)
 plt.close(fig)
 print("Saved fno_loss_history.png")
 
@@ -126,9 +126,9 @@ for plot_idx, sample_idx in enumerate(SAMPLE_INDICES):
     if plot_idx == 0:
         ax.legend(fontsize=7, loc="upper right")
 
-fig.savefig("fno_val_predictions.png", dpi=150)
+fig.savefig("plots/fno_val_predictions.png", dpi=150)
 plt.close(fig)
-print("Saved fno_val_predictions.png")
+print("Saved plots/fno_val_predictions.png")
 
 # ---------------------------------------------------------------------------
 # Figure 3: Per-sample relative L2 error distribution (full val set)
@@ -152,9 +152,9 @@ ax.set_title(f"FNO1d — Error distribution  (n={len(errors)} val samples)")
 ax.legend(fontsize=9)
 ax.grid(True, axis="y", alpha=0.3)
 fig.tight_layout()
-fig.savefig("fno_error_distribution.png", dpi=150)
+fig.savefig("plots/fno_error_distribution.png", dpi=150)
 plt.close(fig)
-print("Saved fno_error_distribution.png")
+print("Saved plots/fno_error_distribution.png")
 
 print(f"\nVal set summary:")
 print(f"  n_samples    : {len(errors)}")

@@ -247,8 +247,8 @@ def train_fno(
 
 if __name__ == "__main__":
     # Expected shapes: f, u  ->  (n_samples, N)
-    f = np.load("poisson_1d_f_train.npy")  # shape (n_samples, N)
-    u = np.load("poisson_1d_u_train.npy")  # shape (n_samples, N)
+    f = np.load("data/poisson_1d_f_train.npy")  # shape (n_samples, N)
+    u = np.load("data/poisson_1d_u_train.npy")  # shape (n_samples, N)
 
     dataset = FUPairDataset(f, u, domain=(0.0, 1.0))
 
@@ -278,10 +278,10 @@ if __name__ == "__main__":
     )
 
     # Save model weights and training history
-    torch.save(model.state_dict(), "fno1d_weights.pt")
-    print("Saved weights -> fno1d_weights.pt")
+    torch.save(model.state_dict(), "models/fno1d_weights.pt")
+    print("Saved weights -> models/fno1d_weights.pt")
 
     import json
-    with open("fno1d_history.json", "w") as fh:
+    with open("models/fno1d_history.json", "w") as fh:
         json.dump(history, fh)
-    print("Saved history -> fno1d_history.json")
+    print("Saved history -> models/fno1d_history.json")

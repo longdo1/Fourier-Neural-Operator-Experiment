@@ -105,9 +105,9 @@ print(f"Sanity check — max residual |−u'' − f| at interior points: {residu
 # ──────────────────────────────────────────────
 # 5. Save
 # ──────────────────────────────────────────────
-np.save("poisson_1d_f_train.npy", f_all)
-np.save("poisson_1d_u_train.npy", u_all)
-np.save("poisson_1d_x_train.npy", x)
+np.save("data/poisson_1d_f_train.npy", f_all)
+np.save("data/poisson_1d_u_train.npy", u_all)
+np.save("data/poisson_1d_x_train.npy", x)
 
 print(f"Saved {N_SAMPLES} samples at resolution {RESOLUTION}")
 print(f"  f shape: {f_all.shape}")
@@ -131,7 +131,7 @@ try:
     axes[-1, 0].set_xlabel("x")
     axes[-1, 1].set_xlabel("x")
     plt.tight_layout()
-    plt.savefig("poisson_1d_samples.png", dpi=150)
-    print("Saved plot: poisson_1d_samples.png")
+    plt.savefig("plots/poisson_1d_samples.png", dpi=150)
+    print("Saved plot: plots/poisson_1d_samples.png")
 except ImportError:
     print("matplotlib not available — skipping plot")

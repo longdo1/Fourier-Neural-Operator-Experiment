@@ -36,9 +36,9 @@ def solve_poisson_fem(f, x):
     v[1:-1] = v_interior
     return v
 
-f_data = np.load("poisson_1d_f_test.npy")
+f_data = np.load("data/poisson_1d_f_test.npy")
 
-x = np.load("poisson_1d_x_test.npy")
+x = np.load("data/poisson_1d_x_test.npy")
 
 N_SAMPLES = f_data.shape[0]
 
@@ -57,5 +57,5 @@ for i in range(N_SAMPLES):
 u_data = np.array(u_data)
 v_data = np.array(v_data)
 
-np.save("poisson_1d_u_FDM.npy", u_data)
-np.save("poisson_1d_u_FEM.npy", v_data)
+np.save("data/poisson_1d_u_FDM.npy", u_data)
+np.save("data/poisson_1d_u_FEM.npy", v_data)

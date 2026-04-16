@@ -29,10 +29,10 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 64
 SAMPLE_INDICES = [0, 40, 200, 500, 1000, 1500]
 
-f_test = np.load("poisson_1d_f_test.npy")   # (N_SAMPLES, RESOLUTION)
-x_grid = np.load("poisson_1d_x_test.npy")   # (RESOLUTION,)
-u_fdm  = np.load("poisson_1d_u_FDM.npy")    # (N_SAMPLES, RESOLUTION)
-u_fem  = np.load("poisson_1d_u_FEM.npy")    # (N_SAMPLES, RESOLUTION)
+f_test = np.load("data/poisson_1d_f_test.npy")   # (N_SAMPLES, RESOLUTION)
+x_grid = np.load("data/poisson_1d_x_test.npy")   # (RESOLUTION,)
+u_fdm  = np.load("data/poisson_1d_u_FDM.npy")    # (N_SAMPLES, RESOLUTION)
+u_fem  = np.load("data/poisson_1d_u_FEM.npy")    # (N_SAMPLES, RESOLUTION)
 
 N_SAMPLES, RESOLUTION = f_test.shape
 
@@ -47,7 +47,7 @@ x_in_all = torch.stack([f_tensor, x_tensor], dim=-1)  # (N_SAMPLES, RESOLUTION, 
 # Load model and run inference in batches
 # ---------------------------------------------------------------------------
 model = FNO1d(modes=16, width=64, in_channels=2, out_channels=1, n_layers=4)
-model.load_state_dict(torch.load("fno1d_weights.pt", map_location=DEVICE))
+model.load_state_dict(torch.load("models/fno1d_weights.pt", map_location=DEVICE))
 model = model.to(DEVICE)
 model.eval()
 
@@ -60,8 +60,8 @@ with torch.no_grad():
 
 u_fno = np.concatenate(preds, axis=0).squeeze(-1)   # (N_SAMPLES, RESOLUTION)
 
-np.save("poisson_1d_u_FNO.npy", u_fno)
-print(f"Saved poisson_1d_u_FNO.npy  shape={u_fno.shape}")
+np.save("data/poisson_1d_u_FNO.npy", u_fno)
+print(f"Saved data/poisson_1d_u_FNO.npy  shape={u_fno.shape}")
 
 # ---------------------------------------------------------------------------
 # Helper: relative L2 error per sample
@@ -111,9 +111,9 @@ def plot_comparison(u_a, u_b, label_a, label_b, color_a, color_b, filename):
         ax.set_xlabel("x", fontsize=8)
 
     fig.tight_layout()
-    fig.savefig(filename, dpi=150)
+    fig.savefig(f"plots/{filename}", dpi=150)
     plt.close(fig)
-    print(f"Saved {filename}")
+    print(f"Saved plots/{filename}")
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +134,9 @@ def plot_error_dist(errors, label_a, label_b, filename):
     ax.legend(fontsize=9)
     ax.grid(True, axis="y", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(filename, dpi=150)
+    fig.savefig(f"plots/{filename}", dpi=150)
     plt.close(fig)
-    print(f"Saved {filename}")
+    print(f"Saved plots/{filename}")
 
 
 # ---------------------------------------------------------------------------
