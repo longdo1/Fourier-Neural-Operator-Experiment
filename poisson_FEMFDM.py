@@ -56,3 +56,6 @@ for i in range(N_SAMPLES):
 
 u_data = np.array(u_data)
 v_data = np.array(v_data)
+
+np.save("poisson_1d_u_FDM.npy", u_data)
+np.save("poisson_1d_u_FEM.npy", v_data)
